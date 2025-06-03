@@ -64,7 +64,6 @@ target_link_libraries(opener
     ${FD_FRAMEWORK}
     ${CMAKE_CURRENT_SOURCE_DIR}/libfrida-gum-x86_64-arm64e-arm64.a
     "-framework Security"
-    sandbox
 )
 target_include_directories(opener PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

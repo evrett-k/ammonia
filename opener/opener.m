@@ -12,16 +12,6 @@
 #include <mach/mach.h>
 #include <libproc.h>
 
-#include "../SandboxSPI.h"
-
-#define DYLD_INTERPOSE(_replacement, _replacee)                                 \
-    __attribute__((used)) static struct {                                       \
-        const void *replacement;                                                \
-        const void *replacee;                                                   \
-    } _interpose_##_replacee __attribute__((section("__DATA,__interpose"))) = { \
-        (const void *)(unsigned long)&_replacement,                             \
-        (const void *)(unsigned long)&_replacee};
-
 const char *GetExePath(void) {
     uint32_t bufsize = 0;
     _NSGetExecutablePath(NULL, &bufsize);
@@ -110,63 +100,6 @@ int IsForegroundProcess()
     //       !(category_policy.role & TASK_UNSPECIFIED) || // a gamble
            !(category_policy.role & TASK_DEFAULT_APPLICATION);
 }
-
-NSString *AppendMachRegister(NSString *profileStr) {
-    if (IsForegroundProcess() != 0) 
-        return profileStr;
-
-    if ([profileStr hasPrefix:@"com.apple."]) 
-        return profileStr;
-
-    return [profileStr stringByAppendingString:@"\n\n(allow mach-register)"];
-}
-
-int SandboxInitHook(const char *profile, uint64_t flags, char **errorbuf) {
-    // Convert the profile C string to NSString and modify it
-    NSString *originalProfile = [NSString stringWithUTF8String:profile ?: "(null)"];
-    NSLog(@"[sandbox] Original Profile: %@", originalProfile);
-
-    NSString *modifiedProfile = AppendMachRegister(originalProfile);
-    NSLog(@"[sandbox] Modified Profile: %@", modifiedProfile);
-
-    const char *modifiedCProfile = [modifiedProfile UTF8String];
-    int retval = sandbox_init(modifiedCProfile, flags, errorbuf);
-    return retval;
-}
-
-int SandboxInitWithParametersHook(const char *profile, uint64_t flags,
-                                  const char *const parameters[],
-                                  char **errorbuf) {
-    // Convert the profile C string to NSString and modify it
-    NSString *originalProfile = [NSString stringWithUTF8String:profile ?: "(null)"];
-    NSLog(@"[sandbox] Original Profile: %@", originalProfile);
-
-    NSString *modifiedProfile = AppendMachRegister(originalProfile);
-    NSLog(@"[sandbox] Modified Profile: %@", modifiedProfile);
-
-    const char *modifiedCProfile = [modifiedProfile UTF8String];
-    int retval = sandbox_init_with_parameters(modifiedCProfile, flags, parameters, errorbuf);
-    return retval;
-}
-
-int SandboxInitWithExtHook(const char *profile, uint64_t flags,
-                                  const char *const ext[],
-                                  char **errorbuf) {
-    // Convert the profile C string to NSString and modify it
-    NSString *originalProfile = [NSString stringWithUTF8String:profile ?: "(null)"];
-    NSLog(@"[sandbox] Original Profile: %@", originalProfile);
-
-    NSString *modifiedProfile = AppendMachRegister(originalProfile);
-    NSLog(@"[sandbox] Modified Profile: %@", modifiedProfile);
-
-    const char *modifiedCProfile = [modifiedProfile UTF8String];
-    int retval = sandbox_init_with_extensions(modifiedCProfile, flags, ext, errorbuf);
-    return retval;
-}
-
-DYLD_INTERPOSE(SandboxInitWithExtHook, sandbox_init_with_extensions) 
-DYLD_INTERPOSE(SandboxInitWithParametersHook, sandbox_init_with_parameters) 
-DYLD_INTERPOSE(SandboxInitHook, sandbox_init) 
 
 void __attribute__((constructor)) ctor_main(void) {
     // Make frida interceptor availible to tweaks
