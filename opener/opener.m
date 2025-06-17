@@ -23,60 +23,90 @@ const char *GetExePath(void) {
 void Open(void * interceptor) { 
     DIR *dr;
     struct dirent *en;
-    dr = opendir(SupportFolderP"tweaks/"); // Open the directory
+    dr = opendir(SupportFolderP "tweaks/"); // Open the directory
     if (dr) {
         while ((en = readdir(dr)) != NULL) {
-            if (en->d_type == DT_REG) { // Check if it's a regular file
+            if (en->d_type == DT_REG) {
                 char full_path[PATH_MAX];
                 snprintf(full_path, sizeof(full_path), "%stweaks/%s", SupportFolderP, en->d_name);
 
-                // Load the blacklist file for the current dylib
+                // Construct paths for whitelist and blacklist files
+                char whitelist_file[PATH_MAX];
+                snprintf(whitelist_file, sizeof(whitelist_file), "%stweaks/%s.whitelist", SupportFolderP, en->d_name);
+
                 char blacklist_file[PATH_MAX];
                 snprintf(blacklist_file, sizeof(blacklist_file), "%stweaks/%s.blacklist", SupportFolderP, en->d_name);
 
-                // Check if the blacklist file exists and open it
-                FILE *blacklist_fp = fopen(blacklist_file, "r");
-                if (blacklist_fp) {
-                    char process_name[256]; // Adjust the buffer size as needed
-                    while (fgets(process_name, sizeof(process_name), blacklist_fp) != NULL) {
-                        // Remove newline characters from the process_name
+                const char *exe_path = GetExePath();
+                bool should_load = false;
+
+                // Priority 1: whitelist
+                FILE *whitelist_fp = fopen(whitelist_file, "r");
+                if (whitelist_fp) {
+                    char process_name[256];
+                    while (fgets(process_name, sizeof(process_name), whitelist_fp) != NULL) {
                         size_t len = strlen(process_name);
                         if (len > 0 && process_name[len - 1] == '\n') {
                             process_name[len - 1] = '\0';
                         }
 
-                        // Check if the current process name is blacklisted
-                        if (strstr(GetExePath(), process_name) != NULL)
-                        {
-                            // Process name is blacklisted, skip loading the dylib
-                            syslog(LOG_INFO, "Process name %s is blacklisted for %s.", process_name, en->d_name);
-                            fclose(blacklist_fp);
-                            goto cleanup;
+                        if (strstr(exe_path, process_name) != NULL) {
+                            should_load = true;
+                            break;
                         }
                     }
-                    fclose(blacklist_fp); // Close the blacklist file
+                    fclose(whitelist_fp);
 
-                    // If not blacklisted, attempt to dynamically load the shared library
-                    void *handle = dlopen(full_path, RTLD_NOW | RTLD_GLOBAL);
-                    if (handle == NULL)
-                    {
-                        syslog(LOG_ERR, "Error loading %s: %s", full_path, dlerror());
+                    if (!should_load) {
+                        syslog(LOG_INFO, "Process %s is not whitelisted for %s.", exe_path, en->d_name);
+                        goto cleanup;
                     }
-                    
+                } else {
+                    // Priority 2: blacklist
+                    FILE *blacklist_fp = fopen(blacklist_file, "r");
+                    if (blacklist_fp) {
+                        should_load = true;
+                        char process_name[256];
+                        while (fgets(process_name, sizeof(process_name), blacklist_fp) != NULL) {
+                            size_t len = strlen(process_name);
+                            if (len > 0 && process_name[len - 1] == '\n') {
+                                process_name[len - 1] = '\0';
+                            }
+
+                            if (strstr(exe_path, process_name) != NULL) {
+                                should_load = false;
+                                syslog(LOG_INFO, "Process %s is blacklisted for %s.", exe_path, en->d_name);
+                                break;
+                            }
+                        }
+                        fclose(blacklist_fp);
+                        if (!should_load) {
+                            goto cleanup;
+                        }
+                    } else {
+                        // Neither whitelist nor blacklist exists — skip
+                        goto cleanup;
+                    }
+                }
+
+                // Load the dylib
+                void *handle = dlopen(full_path, RTLD_NOW | RTLD_GLOBAL);
+                if (handle == NULL) {
+                    syslog(LOG_ERR, "Error loading %s: %s", full_path, dlerror());
+                } else {
                     void (*LoadFunction)(void *) = dlsym(handle, "LoadFunction");
-                    if (LoadFunction != NULL)
-                    {
+                    if (LoadFunction != NULL) {
                         LoadFunction(interceptor);
                     }
                 }
 
             cleanup:
-                continue; // Continue with the next file
+                continue;
             }
         }
-        closedir(dr); // Close the directory
+        closedir(dr);
     } else {
-        syslog(LOG_ERR, "Error opening directory.");
+        syslog(LOG_ERR, "Error opening tweaks directory.");
     }
     closelog();
 }
